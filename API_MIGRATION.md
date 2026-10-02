@@ -1,6 +1,6 @@
 # API and migration guide
 
-This guide describes the merged backend in `davinci`, its compatibility aliases, and the changes a client migrating from either parent backend must account for. All API paths below are rooted at `/api`, except the root and health endpoints.
+This guide describes the merged backend in `waybridge-be`, its compatibility aliases, and the changes a client migrating from either parent backend must account for. All API paths below are rooted at `/api`, except the root and health endpoints.
 
 ## Common response envelope
 

@@ -17,7 +17,7 @@ Waybridge relies on two distinct, complementary repositories working in tandem t
 * [Frontend Dev 1](https://github.com) - Core UI components, webhook dashboard layout (🎨)
 * [Frontend Dev 2](https://github.com) - Global state management, event log visualizations (🎨)
 * [Frontend Dev 3](https://github.com) - Real-time notification streams, component styling (🎨)
-* [Frontend Dev 4](https://github.com) - UI integration tests, client-side error handling (🎨, 🐛)
+* [Emmanuel Agbavwe](https://github.com/Aro1914) - UI integration tests, client-side error handling (🎨, 🐛)
 
 ### Backend Team
 * [Backend Dev 1](https://github.com) - Database architecture, webhook delivery engine (⚙️)

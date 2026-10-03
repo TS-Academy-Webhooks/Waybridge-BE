@@ -1,67 +1,78 @@
-const crypto = require("crypto");
-const Webhook = require("../models/webhook");
-const { sendError, sendSuccess } = require("../utils/apiResponse");
+const {
+  clearReceivedRequests,
+  getResponseProfile,
+  getResponseProfiles,
+  listReceivedRequests,
+  recordReceivedRequest,
+  resetResponseProfiles,
+  updateResponseProfiles,
+  verifySignature,
+} = require("../services/demoReceiver");
+const { paginatedData, sendSuccess } = require("../utils/apiResponse");
 
-const receivedRequests = [];
-
-async function verifySignature(rawBody, signature, timestamp) {
-  if (!signature) {
-    return null;
-  }
-
-  const normalizedSignature = signature.replace(/^sha256=/, "");
-  if (!/^[a-f\d]{64}$/i.test(normalizedSignature)) return false;
-  const receivedBuffer = Buffer.from(normalizedSignature, "hex");
-  const timestampSeconds = Number(timestamp);
-  const timestampIsFresh = Number.isInteger(timestampSeconds) &&
-    Math.abs(Date.now() / 1000 - timestampSeconds) <= 300;
-  const webhooks = await Webhook.find({ isActive: true }).select("+secret");
-  for (const webhook of webhooks) {
-    const candidates = [
-      timestampIsFresh
-        ? crypto.createHmac("sha256", webhook.secret).update(`${timestamp}.${rawBody}`).digest()
-        : null,
-      crypto.createHmac("sha256", webhook.secret).update(rawBody).digest(),
-    ];
-    for (const expectedBuffer of candidates) {
-      if (expectedBuffer && crypto.timingSafeEqual(expectedBuffer, receivedBuffer)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-exports.receive = async (req, res) => {
-  let signatureValid = null;
-  try {
-    signatureValid = await verifySignature(
-      req.rawBody || "",
-      req.get("X-Webhook-Signature"),
-      req.get("X-Webhook-Timestamp")
-    );
-  } catch (error) {
-    console.error("Demo receiver could not verify the signature:", error.message);
-  }
-
-  const received = {
+async function sendReceiverResponse(req, res, profileName) {
+  const rawBody = req.rawBody || "";
+  const verification = await verifySignature(
+    rawBody,
+    req.get("X-Webhook-Signature"),
+    req.get("X-Webhook-Timestamp")
+  );
+  const received = recordReceivedRequest({
     headers: req.headers,
     body: req.body,
-    rawBody: req.rawBody || "",
-    timestamp: new Date().toISOString(),
-    signatureValid,
-  };
-  receivedRequests.unshift(received);
-  receivedRequests.length = Math.min(receivedRequests.length, 100);
+    rawBody,
+    verification,
+  });
+  const profile = getResponseProfile(profileName);
+  const responseBody = Object.hasOwn(profile, "body")
+    ? profile.body
+    : { success: true, message: "Webhook received", data: received };
 
-  return sendSuccess(res, "Webhook received", received, 201);
-};
+  return res.status(profile.statusCode).json(responseBody);
+}
+
+exports.receive = (req, res) => sendReceiverResponse(req, res, "success");
 
 exports.listReceived = (req, res) => {
-  return sendSuccess(res, "Received webhooks retrieved successfully", receivedRequests);
+  const page = Number(req.query.page || 1);
+  const limit = Number(req.query.limit || 20);
+  const { items, total } = listReceivedRequests({
+    page,
+    limit,
+    signatureValid: req.query.signatureValid,
+    event: req.query.event,
+  });
+  return sendSuccess(
+    res,
+    "Received webhooks retrieved successfully",
+    paginatedData(items, page, limit, total, "requests")
+  );
 };
 
-exports.fail = (req, res) => {
-  return sendError(res, "Demo receiver forced a failure", 500);
+exports.clearReceived = (_req, res) => {
+  return sendSuccess(res, "Received webhook history cleared", {
+    clearedCount: clearReceivedRequests(),
+  });
 };
+
+exports.getConfiguration = (_req, res) => {
+  return sendSuccess(res, "Demo receiver configuration retrieved successfully", getResponseProfiles());
+};
+
+exports.updateConfiguration = (req, res) => {
+  return sendSuccess(
+    res,
+    "Demo receiver configuration updated successfully",
+    updateResponseProfiles(req.body)
+  );
+};
+
+exports.resetConfiguration = (_req, res) => {
+  return sendSuccess(
+    res,
+    "Demo receiver configuration reset successfully",
+    resetResponseProfiles()
+  );
+};
+
+exports.fail = (req, res) => sendReceiverResponse(req, res, "failure");

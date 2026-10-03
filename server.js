@@ -9,7 +9,7 @@ const {
 const User = require("./src/models/User");
 const migrateLegacyData = require("./src/services/legacyDataMigration");
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {

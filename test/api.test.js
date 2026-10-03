@@ -184,12 +184,12 @@ test("webhook URL policy gates localhost and blocks production loopback", async 
   try {
     process.env.NODE_ENV = "development";
     process.env.ALLOW_LOCALHOST_WEBHOOKS = "false";
-    await assert.rejects(validateWebhookUrl("http://localhost:3000"), { statusCode: 400 });
+    await assert.rejects(validateWebhookUrl("http://localhost:5000"), { statusCode: 400 });
     process.env.ALLOW_LOCALHOST_WEBHOOKS = "true";
-    assert.equal(await validateWebhookUrl("http://localhost:3000/receiver"), "http://localhost:3000/receiver");
+    assert.equal(await validateWebhookUrl("http://localhost:5000/receiver"), "http://localhost:5000/receiver");
 
     process.env.NODE_ENV = "production";
-    await assert.rejects(validateWebhookUrl("http://127.0.0.1:3000"), { statusCode: 400 });
+    await assert.rejects(validateWebhookUrl("http://127.0.0.1:5000"), { statusCode: 400 });
     await assert.rejects(validateWebhookUrl("http://8.8.8.8"), { statusCode: 400 });
     assert.equal(await validateWebhookUrl("https://8.8.8.8"), "https://8.8.8.8/");
   } finally {

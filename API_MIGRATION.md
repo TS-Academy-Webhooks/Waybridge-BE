@@ -111,7 +111,21 @@ Receivers must verify the raw request bytes, timestamp freshness, and signature 
 
 `GET /health`, `GET /api/health`, and `GET /` are public. `/health` and `/api/health` use the standard response envelope.
 
-`/api/demo-receiver` is available outside production by default and can be enabled in production only with `ENABLE_DEMO_RECEIVER=true`. Its in-memory received-request list is cleared on restart.
+`/api/demo-receiver` is available outside production by default and can be enabled in production only with `ENABLE_DEMO_RECEIVER=true`. Incoming POSTs are public so webhook providers can reach the receiver; history and response-profile management require an admin access token.
+
+| Method and path | Access | Purpose |
+| --- | --- | --- |
+| `POST /api/demo-receiver` | Public | Record a request and return the configured success response. |
+| `POST /api/demo-receiver/fail` | Public | Record a request and return the configured failure response. |
+| `GET /api/demo-receiver?page=&limit=&signatureValid=&event=` | Admin | Read filtered, paginated request history. `signatureValid` accepts `true`, `false`, or `unknown`. |
+| `DELETE /api/demo-receiver` | Admin | Clear request history. |
+| `GET /api/demo-receiver/config` | Admin | Read the current success and failure response profiles. |
+| `PATCH /api/demo-receiver/config` | Admin | Update either profile's `statusCode` and/or JSON `body`. Success statuses must be 2xx; failure statuses must be 4xx or 5xx. |
+| `DELETE /api/demo-receiver/config` | Admin | Restore the default response profiles. |
+
+The receiver retains at most 100 requests in memory and resets history and response profiles on restart. History defaults to page 1 with 20 requests per page (maximum 50); `event` matches the event type exactly. Captured body previews are limited to 64 KiB; oversized bodies include `bodyTruncated: true`. Authorization, cookie, API-key, and webhook-signature headers are redacted. Each record reports `signatureValid` (`true`, `false`, or `null`) and `signature` metadata describing whether verification was valid, invalid, or missing, the timestamped or legacy signing scheme, and timestamp freshness where available. The timestamped HMAC-SHA256 format and the legacy raw-body format are both accepted. Signature verification infrastructure errors are returned as errors rather than recorded as successful verification.
+
+The default success response remains `201` with the standard success envelope and received-request data. The default `/fail` response is the standard `500` error envelope. A profile's body is optional in `PATCH`; omitting it keeps the default response body, while providing it replaces that body with the supplied JSON value. Public POST routes are rate limited to 1,200 requests per IP per 15 minutes.
 
 ## Automatic database migration
 
@@ -148,4 +162,4 @@ Refresh sessions cannot be migrated from either parent's access tokens. All user
 
 ## Configuration
 
-See `.env.example`. `JWT_SECRET` must contain at least 32 non-example characters. Production startup rejects localhost or wildcard CORS origins. Set `CORS_ORIGIN` to exact allowed origins and use HTTPS. Admin credentials must be unique and non-example; keep them out of source control.
+See `.env.example`. The backend listens on `PORT` (default `5000`); the local Chadman frontend runs on `http://localhost:3000` and uses `http://localhost:5000/api` as its default API base. `JWT_SECRET` must contain at least 32 non-example characters. Production startup rejects localhost or wildcard CORS origins. Set `CORS_ORIGIN` to exact allowed origins and use HTTPS. Admin credentials must be unique and non-example; keep them out of source control.

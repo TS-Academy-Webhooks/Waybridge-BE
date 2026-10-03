@@ -11,7 +11,11 @@ const deliveryRoutes = require("./routes/deliveryRoutes");
 const demoReceiverRoutes = require("./routes/demoReceiverRoutes");
 const authenticate = require("./middleware/auth");
 const authorizeRoles = require("./middleware/authorizeRoles");
-const { authLimiter, trackingLimiter } = require("./middleware/rateLimits");
+const {
+  authLimiter,
+  demoReceiverLimiter,
+  trackingLimiter,
+} = require("./middleware/rateLimits");
 const AppError = require("./utils/AppError");
 const { sendSuccess } = require("./utils/apiResponse");
 const notFound = require("./middleware/notFound");
@@ -19,9 +23,11 @@ const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGIN || process.env.CLIENT_URL || "http://localhost:5173")
+const allowedOrigins = (process.env.CORS_ORIGIN || process.env.CLIENT_URL || "http://localhost:3000")
   .split(",")
   .map((origin) => origin.trim());
+const demoReceiverEnabled = process.env.NODE_ENV !== "production" ||
+  process.env.ENABLE_DEMO_RECEIVER === "true";
 
 app.use(helmet());
 app.use(cors({
@@ -33,6 +39,12 @@ app.use(cors({
   },
   credentials: true,
 }));
+if (demoReceiverEnabled) {
+  app.use("/api/demo-receiver", (req, res, next) => {
+    if (req.method !== "POST") return next();
+    return demoReceiverLimiter(req, res, next);
+  });
+}
 app.use(cookieParser());
 app.use(express.json({
   limit: "1mb",
@@ -54,7 +66,7 @@ app.use("/api/tracking", trackingLimiter, trackingRoutes);
 app.use("/api/events", authenticate, authorizeRoles("admin"), eventRoutes);
 app.use("/api/webhooks", authenticate, webhookRoutes);
 app.use("/api/deliveries", authenticate, deliveryRoutes);
-if (process.env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_RECEIVER === "true") {
+if (demoReceiverEnabled) {
   app.use("/api/demo-receiver", demoReceiverRoutes);
 }
 

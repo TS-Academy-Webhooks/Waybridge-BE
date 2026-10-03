@@ -1,0 +1,2640 @@
+openapi: 3.0.3
+info:
+  title: Waybridge Logistics Webhook API
+  version: 1.0.0
+  description: |
+    OpenAPI contract for the Waybridge backend. API resources are rooted at
+    `/api`; `/`, `/health`, and `/api/health` are also public.
+
+    **Access tokens:** use `Authorization: Bearer <accessToken>`. Access tokens
+    expire after 15 minutes and are bound to a live refresh session. A successful
+    registration, login, or refresh also sets an HttpOnly refresh cookie. The
+    development cookie is `refreshToken`; production uses
+    `__Secure-refreshToken`. Browser clients must send credentialed requests to
+    the same configured CORS origin. Refresh cookies are scoped to `/api/auth`
+    and last 30 days; the refresh token is never returned in JSON.
+
+    **Roles and ownership:** public operations require no credentials.
+    Authenticated customer operations are restricted to the caller's shipments,
+    webhooks, and deliveries. Admin-only operations are marked explicitly.
+    Shipment ownership filtering can make another user's resource appear as a
+    404.
+
+    **Common behavior:** JSON request bodies are limited to 1 MiB; larger
+    bodies are rejected with 413. Unhandled server failures return HTTP 500.
+    Errors use `{ success: false, message, data: null }`; request validation
+    adds an `errors` array with `field` and `message`. Paginated list data
+    includes `items`, a resource-named array alias, and `pagination` with both
+    `total` and `totalItems`.
+
+    Webhook targets must use HTTP or HTTPS and cannot contain URL credentials.
+    Production requires HTTPS and blocks private, loopback, link-local, and
+    reserved IP addresses after DNS resolution. Local targets are allowed only
+    outside production with `ALLOW_LOCALHOST_WEBHOOKS=true`.
+
+    Authentication routes are limited to 20 requests per IP per 15 minutes.
+    `REFRESH_COOKIE_SAME_SITE` defaults to `strict`; `none` is accepted only in
+    production HTTPS. CORS allows configured origins with credentials.
+
+    **Outgoing webhook deliveries:** the backend sends a JSON object with
+    `{ id, type, createdAt, data }`, where `id` is the public event ID and
+    `data` is that event's payload. `X-Webhook-Signature` is
+    `sha256=<hex HMAC-SHA256>` over `<unix timestamp seconds>.<exact raw body>`
+    using the per-hook secret; `X-Webhook-Timestamp`, `X-Webhook-Event`, and
+    `X-Webhook-Delivery` accompany it. Receivers should verify the raw bytes
+    and compare signatures in constant time. Automatic delivery makes at most
+    three attempts with 2- and 5-second retry delays; each request times out
+    after five seconds and captured receiver response text is capped at 1,000
+    characters. Test and manual retry endpoints respond when work is queued,
+    not when the receiver succeeds.
+  contact:
+    name: Waybridge Backend
+servers:
+  - url: /
+    description: Same-origin deployment; use the host serving this Swagger UI.
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Shipments
+  - name: Tracking
+  - name: Events
+  - name: Webhooks
+  - name: Deliveries
+  - name: Demo receiver
+    description: |
+      The demo receiver routes are mounted outside production by default. In
+      production they are available only when `ENABLE_DEMO_RECEIVER=true`.
+paths:
+  /:
+    get:
+      tags: [Health]
+      summary: Check that the API process is responding
+      operationId: getRoot
+      security: []
+      responses:
+        "200":
+          description: API is responding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+              example:
+                success: true
+                message: Logistics API is running
+                data:
+                  status: ok
+  /health:
+    get:
+      tags: [Health]
+      summary: Check API health
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: API health response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+              example:
+                success: true
+                message: API is healthy
+                data:
+                  status: ok
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Compatibility alias for the health check
+      operationId: getApiHealth
+      security: []
+      responses:
+        "200":
+          description: API health response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+  /api/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register a customer account
+      operationId: register
+      description: |
+        Public registration always creates a `customer`; any submitted `role`
+        property is ignored. On success the response sets the refresh cookie.
+        This endpoint returns the access token as `data.token` (the login and
+        refresh endpoints additionally return `data.accessToken`).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+            example:
+              name: Ada Lovelace
+              email: ada@example.com
+              password: correct-horse-battery-staple
+      responses:
+        "201":
+          description: Customer account created; refresh cookie issued.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationEnvelope"
+              example:
+                success: true
+                message: Account registered successfully
+                data:
+                  user:
+                    id: 65a123456789012345678901
+                    _id: 65a123456789012345678901
+                    name: Ada Lovelace
+                    email: ada@example.com
+                    role: customer
+                    createdAt: "2026-10-03T10:00:00.000Z"
+                    updatedAt: "2026-10-03T10:00:00.000Z"
+                  token: eyJhbGciOiJIUzI1NiJ9.example
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "409":
+          description: An account already exists for this email.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Sign in and start a refresh session
+      operationId: login
+      description: Authentication endpoints are limited to 20 requests per IP per 15 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              email: ada@example.com
+              password: correct-horse-battery-staple
+      responses:
+        "200":
+          description: Signed in; access token returned and refresh cookie issued.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSessionEnvelope"
+              example:
+                success: true
+                message: Login successful
+                data:
+                  user:
+                    id: 65a123456789012345678901
+                    _id: 65a123456789012345678901
+                    name: Ada Lovelace
+                    email: ada@example.com
+                    role: customer
+                    createdAt: "2026-10-03T10:00:00.000Z"
+                    updatedAt: "2026-10-03T10:00:00.000Z"
+                  accessToken: eyJhbGciOiJIUzI1NiJ9.example
+                  token: eyJhbGciOiJIUzI1NiJ9.example
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          description: Email or password is incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Rotate the refresh session and issue an access token
+      operationId: refreshSession
+      description: |
+        Send the HttpOnly refresh cookie; do not send a refresh token in JSON.
+        Rotation replaces the cookie and invalidates the prior token. Browsers
+        must use credentialed requests. The cookie name is environment-dependent:
+        `refreshToken` outside production and `__Secure-refreshToken` in
+        production.
+      security:
+        - refreshCookie: []
+        - productionRefreshCookie: []
+      responses:
+        "200":
+          description: Session refreshed and refresh cookie rotated.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSessionEnvelope"
+              example:
+                success: true
+                message: Access token refreshed
+                data:
+                  user:
+                    id: 65a123456789012345678901
+                    _id: 65a123456789012345678901
+                    name: Ada Lovelace
+                    email: ada@example.com
+                    role: customer
+                    createdAt: "2026-10-03T10:00:00.000Z"
+                    updatedAt: "2026-10-03T10:00:00.000Z"
+                  accessToken: eyJhbGciOiJIUzI1NiJ9.example
+                  token: eyJhbGciOiJIUzI1NiJ9.example
+        "401":
+          description: Refresh cookie is missing, invalid, revoked, or expired.
+          headers:
+            Set-Cookie:
+              description: The invalid refresh cookie is cleared when present.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke the refresh session and clear its cookie
+      operationId: logout
+      description: |
+        If a refresh cookie is present, its session is revoked. Without a cookie
+        this endpoint still succeeds and clears the browser cookie.
+        Authentication endpoints are rate limited to 20 requests per IP per
+        15 minutes.
+      security: []
+      responses:
+        "200":
+          description: Logged out; refresh cookie cleared.
+          headers:
+            Set-Cookie:
+              description: Expired cookie for the current environment.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptySuccessEnvelope"
+              example:
+                success: true
+                message: Logged out successfully
+                data: null
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/auth/change-password:
+    post:
+      tags: [Authentication]
+      summary: Change the current user's password
+      operationId: changePassword
+      description: Requires a bearer access token. A successful password change revokes all active refresh sessions, including the current one, and clears the refresh cookie.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+            example:
+              currentPassword: correct-horse-battery-staple
+              newPassword: a-different-correct-horse-battery
+      responses:
+        "200":
+          description: Password changed; refresh cookie cleared.
+          headers:
+            Set-Cookie:
+              description: Expired refresh cookie for the current environment.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptySuccessEnvelope"
+              example:
+                success: true
+                message: Password changed. Please sign in again.
+                data: null
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          description: Access token is invalid/expired or current password is incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get the authenticated user's public profile
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current profile. Public fields are available both directly under `data` and under `data.user`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserEnvelope"
+              example:
+                success: true
+                message: Current user retrieved successfully
+                data:
+                  id: 65a123456789012345678901
+                  _id: 65a123456789012345678901
+                  name: Ada Lovelace
+                  email: ada@example.com
+                  role: customer
+                  createdAt: "2026-10-03T10:00:00.000Z"
+                  updatedAt: "2026-10-03T10:00:00.000Z"
+                  user:
+                    id: 65a123456789012345678901
+                    _id: 65a123456789012345678901
+                    name: Ada Lovelace
+                    email: ada@example.com
+                    role: customer
+                    createdAt: "2026-10-03T10:00:00.000Z"
+                    updatedAt: "2026-10-03T10:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/shipments:
+    get:
+      tags: [Shipments]
+      summary: List shipments visible to the authenticated user
+      operationId: listShipments
+      description: Customers receive only shipments assigned to their account; admins receive all shipments.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ShipmentLimit"
+        - name: search
+          in: query
+          description: Case-insensitive substring search across tracking number, customer, origin, and destination.
+          schema:
+            type: string
+            maxLength: 100
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ShipmentStatus"
+      responses:
+        "200":
+          description: Paginated shipment list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShipmentListEnvelope"
+              example:
+                success: true
+                message: Shipments retrieved successfully
+                data:
+                  items:
+                    - id: 65a123456789012345678901
+                      _id: 65a123456789012345678901
+                      trackingNumber: TRK-12345
+                      customer: Ada Lovelace
+                      customerId: 65a123456789012345678902
+                      origin: London
+                      destination: Paris
+                      amount: 42.5
+                      status: in_transit
+                      statusHistory: []
+                      timeline: []
+                      createdAt: "2026-10-03T10:00:00.000Z"
+                      updatedAt: "2026-10-03T10:00:00.000Z"
+                  shipments: []
+                  pagination:
+                    page: 1
+                    limit: 20
+                    total: 1
+                    totalItems: 1
+                    totalPages: 1
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Shipments]
+      summary: Create a shipment
+      operationId: createShipment
+      description: |
+        Customers supply `origin`, `destination`, and `amount`; the API assigns
+        the shipment to the signed-in customer, and customer callers must omit
+        `customerId` (submissions containing that property are rejected).
+        Admins must supply `customer` and may supply `customerId` for an
+        existing customer account. Tracking numbers are generated by the server.
+        A `shipment.created` event is emitted and matching webhook deliveries
+        are queued asynchronously.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShipmentRequest"
+            examples:
+              customer:
+                value:
+                  origin: London
+                  destination: Paris
+                  amount: 42.5
+              admin:
+                value:
+                  customer: Ada Lovelace
+                  customerId: 65a123456789012345678902
+                  origin: London
+                  destination: Paris
+                  amount: 42.5
+                  note: Collected at front desk
+      responses:
+        "201":
+          description: Shipment created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShipmentEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/shipments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MongoId"
+    get:
+      tags: [Shipments]
+      summary: Get one shipment
+      operationId: getShipment
+      description: Customers can read only shipments assigned to them; admins can read any shipment.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Shipment details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShipmentEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Shipment does not exist or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/shipments/{id}/customer:
+    parameters:
+      - $ref: "#/components/parameters/MongoId"
+    patch:
+      tags: [Shipments]
+      summary: Assign a shipment to a customer
+      operationId: assignShipmentCustomer
+      description: Admin only. The target ID must belong to an existing customer account.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignShipmentCustomerRequest"
+            example:
+              customerId: 65a123456789012345678902
+      responses:
+        "200":
+          description: Shipment assigned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShipmentEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Shipment or target customer was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/shipments/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/MongoId"
+    patch:
+      tags: [Shipments]
+      summary: Advance a shipment status
+      operationId: updateShipmentStatus
+      description: |
+        Admin only. Status changes must follow the workflow: `created` can move
+        to `picked_up` or `cancelled`; `picked_up` to `in_transit` or
+        `cancelled`; `in_transit` to `arrived_at_hub` or `cancelled`;
+        `arrived_at_hub` to `in_transit`, `out_for_delivery`, or `cancelled`;
+        `out_for_delivery` to `delivered` or `delivery_failed`;
+        `delivery_failed` to `out_for_delivery` or `cancelled`. `delivered` and
+        `cancelled` are terminal. A successful change appends status history,
+        emits the corresponding shipment event, and queues matching webhook
+        deliveries asynchronously.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateShipmentStatusRequest"
+            example:
+              status: in_transit
+              note: Departed regional hub
+      responses:
+        "200":
+          description: Shipment status updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShipmentEnvelope"
+        "400":
+          description: Invalid status or transition, or request validation failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Shipment was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/tracking/{trackingNumber}:
+    get:
+      tags: [Tracking]
+      summary: Get public shipment tracking information
+      operationId: trackShipment
+      description: Public endpoint, rate limited to 60 requests per IP per 15 minutes.
+      security: []
+      parameters:
+        - name: trackingNumber
+          in: path
+          required: true
+          description: Tracking number in `TRK-` plus five decimal digits format.
+          schema:
+            type: string
+            pattern: "^TRK-\\d{5}$"
+          example: TRK-12345
+      responses:
+        "200":
+          description: Public tracking status and timeline.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackingEnvelope"
+              example:
+                success: true
+                message: Shipment tracking retrieved successfully
+                data:
+                  trackingNumber: TRK-12345
+                  status: in_transit
+                  origin: London
+                  destination: Paris
+                  timeline:
+                    - status: created
+                      at: "2026-10-02T10:00:00.000Z"
+                      timestamp: "2026-10-02T10:00:00.000Z"
+                      note: null
+                  lastUpdated: "2026-10-03T10:00:00.000Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: No shipment exists for this tracking number.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/events:
+    get:
+      tags: [Events]
+      summary: List shipment and webhook test events
+      operationId: listEvents
+      description: Admin only. Search matches public event IDs; results are newest first.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/EventLimit"
+        - name: type
+          in: query
+          description: Event type filter.
+          schema:
+            $ref: "#/components/schemas/EventType"
+        - name: search
+          in: query
+          description: Case-insensitive substring of the public `evt_` event ID.
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: Paginated event list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventListEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    parameters: []
+  /api/events/{id}:
+    get:
+      tags: [Events]
+      summary: Get an event by database ID or public event ID
+      operationId: getEvent
+      description: Admin only. Accepts a MongoDB ObjectId or public event ID such as `evt_123456`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-zA-Z0-9_-]+$"
+          examples:
+            mongoId:
+              value: 65a123456789012345678901
+            eventId:
+              value: evt_123456
+      responses:
+        "200":
+          description: Event record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Event was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhooks visible to the authenticated user
+      operationId: listWebhooks
+      description: Customers see their own hooks; admins see all hooks. Secret values are masked. `isActive` is an alias for `active` and takes precedence if both are supplied.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/WebhookLimit"
+        - name: search
+          in: query
+          description: Case-insensitive substring search across webhook name and URL.
+          schema:
+            type: string
+            maxLength: 100
+        - name: active
+          in: query
+          description: Filter by active state. Alias `isActive` is also accepted.
+          schema:
+            type: boolean
+        - name: isActive
+          in: query
+          description: Compatibility alias for `active`; takes precedence if both are provided.
+          schema:
+            type: boolean
+        - name: event
+          in: query
+          description: Include hooks subscribed to this event or to all events (`*`).
+          schema:
+            $ref: "#/components/schemas/WebhookEventFilter"
+      responses:
+        "200":
+          description: Paginated webhooks with masked secrets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookListEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Webhooks]
+      summary: Create a webhook
+      operationId: createWebhook
+      description: |
+        Customers own hooks they create; admins may create hooks for themselves.
+        The generated signing secret is returned in full only in this response.
+        Store it securely. Target URLs are subject to environment-dependent
+        outbound URL restrictions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWebhookRequest"
+            example:
+              name: Shipment notifications
+              url: https://hooks.example.com/waybridge
+              events:
+                - shipment.created
+                - shipment.delivered
+              active: true
+      responses:
+        "201":
+          description: Webhook created; full secret returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEnvelope"
+              example:
+                success: true
+                message: Webhook created successfully
+                data:
+                  id: 65a123456789012345678901
+                  _id: 65a123456789012345678901
+                  ownerId: 65a123456789012345678902
+                  user: 65a123456789012345678902
+                  name: Shipment notifications
+                  url: https://hooks.example.com/waybridge
+                  events: [shipment.created, shipment.delivered]
+                  secret: whsec_0123456789abcdef0123456789abcdef0123456789abcdef
+                  isActive: true
+                  active: true
+                  createdAt: "2026-10-03T10:00:00.000Z"
+                  updatedAt: "2026-10-03T10:00:00.000Z"
+        "400":
+          description: Invalid input or URL rejected by outbound URL policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+      callbacks:
+        webhookEventDelivery:
+          "{$request.body#/url}":
+            post:
+              tags: [Webhooks]
+              summary: Receive an outgoing event delivery
+              operationId: receiveWebhookEvent
+              description: |
+                Waybridge POSTs this callback for each matching event, and for
+                an explicit `webhook.test`. The exact serialized body is signed
+                with HMAC-SHA256 using the created webhook's secret. A 2xx
+                receiver response marks the attempt successful; a non-2xx
+                response or timeout is retried according to the delivery policy.
+              security: []
+              parameters:
+                - name: X-Webhook-Event
+                  in: header
+                  required: true
+                  schema:
+                    $ref: "#/components/schemas/EventType"
+                - name: X-Webhook-Delivery
+                  in: header
+                  required: true
+                  description: MongoDB ID of the delivery summary.
+                  schema:
+                    $ref: "#/components/schemas/MongoId"
+                - name: X-Webhook-Timestamp
+                  in: header
+                  required: true
+                  description: Unix timestamp in seconds used in the signature input.
+                  schema:
+                    type: string
+                    pattern: "^\\d+$"
+                - name: X-Webhook-Signature
+                  in: header
+                  required: true
+                  description: "`sha256=` followed by a lowercase hexadecimal HMAC-SHA256 digest of `<timestamp>.<exact raw body>`."
+                  schema:
+                    type: string
+                    pattern: "^sha256=[a-f0-9]{64}$"
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: "#/components/schemas/WebhookDeliveryPayload"
+                    example:
+                      id: evt_123456
+                      type: shipment.created
+                      createdAt: "2026-10-03T10:00:00.000Z"
+                      data:
+                        event: shipment.created
+                        eventId: evt_123456
+                        shipmentId: TRK-12345
+                        status: created
+                        timestamp: "2026-10-03T10:00:00.000Z"
+              responses:
+                "2XX":
+                  description: Receiver accepted the delivery; any 2xx status is considered success.
+                default:
+                  description: Any non-2xx response is recorded as a failed attempt and may be retried.
+                  content:
+                    text/plain:
+                      schema:
+                        type: string
+                        maxLength: 1000
+  /api/webhooks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MongoId"
+    get:
+      tags: [Webhooks]
+      summary: Get one webhook
+      operationId: getWebhook
+      description: Customers can read only their own hooks. Secret value is masked.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Webhook details with masked secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Webhook does not exist or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    patch:
+      tags: [Webhooks]
+      summary: Partially update a webhook
+      operationId: patchWebhook
+      description: |
+        At least one supported property is required. `isActive` takes precedence
+        over `active` when both are present. Set `regenerateSecret` to `true` to
+        replace the signing secret; the new full secret is returned only in that
+        response. The secret remains masked for all other updates.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebhookRequest"
+            example:
+              active: false
+      responses:
+        "200":
+          description: Webhook updated; secret is full only if regenerated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEnvelope"
+        "400":
+          description: Invalid input, URL rejected, or no supported update property supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Webhook does not exist or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    put:
+      tags: [Webhooks]
+      summary: Compatibility alias for updating a webhook
+      operationId: putWebhook
+      description: Has the same partial-update behavior and request format as PATCH.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebhookRequest"
+      responses:
+        "200":
+          description: Webhook updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Webhook does not exist or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      tags: [Webhooks]
+      summary: Delete a webhook
+      operationId: deleteWebhook
+      description: Customers can delete their own hooks; admins can delete any hook.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Webhook deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptySuccessEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Webhook does not exist or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/webhooks/{id}/deliveries:
+    get:
+      tags: [Webhooks, Deliveries]
+      summary: List delivery summaries for a webhook
+      operationId: listWebhookDeliveries
+      description: Customers can see deliveries for their own hooks; admins can see all.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MongoId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/DeliveryLimit"
+        - $ref: "#/components/parameters/DeliveryStatus"
+      responses:
+        "200":
+          description: Paginated delivery summaries with nested attempts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryListEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Webhook does not exist or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/webhooks/{id}/test:
+    post:
+      tags: [Webhooks]
+      summary: Queue a one-off webhook test delivery
+      operationId: testWebhook
+      description: |
+        Creates a `webhook.test` event and queues delivery asynchronously.
+        The webhook must be active. The response confirms queuing, not receiver
+        success.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MongoId"
+      responses:
+        "202":
+          description: Test delivery queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryQueueEnvelope"
+        "400":
+          description: Webhook is inactive or ID is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Webhook does not exist or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/deliveries:
+    get:
+      tags: [Deliveries]
+      summary: List delivery summaries visible to the authenticated user
+      operationId: listDeliveries
+      description: Customers see their own delivery summaries; admins see all.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/DeliveryLimit"
+        - $ref: "#/components/parameters/DeliveryStatus"
+        - name: webhookId
+          in: query
+          schema:
+            $ref: "#/components/schemas/MongoId"
+        - name: eventId
+          in: query
+          description: MongoDB ID of the event document.
+          schema:
+            $ref: "#/components/schemas/MongoId"
+      responses:
+        "200":
+          description: Paginated delivery summaries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryListEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    parameters: []
+  /api/deliveries/{id}:
+    get:
+      tags: [Deliveries]
+      summary: Get a delivery summary and attempt history
+      operationId: getDelivery
+      description: |
+        Accepts a delivery summary ID or historical delivery-attempt ID. The
+        result is restricted to the current customer's owned webhook; admins
+        can read all. If a legacy attempt no longer has a summary, a compatible
+        response contains that attempt with `delivery: null`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MongoId"
+      responses:
+        "200":
+          description: Delivery summary and ordered attempts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryDetailEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Delivery or attempt was not found or is not visible to this customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/deliveries/{id}/resend:
+    post:
+      tags: [Deliveries]
+      summary: Queue another attempt for a delivery
+      operationId: resendDelivery
+      description: |
+        Accepts a delivery summary ID or historical attempt ID. A pending
+        delivery returns 409. Resending a successful delivery creates a new
+        summary. The `202` response means queued, not delivered.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MongoId"
+      responses:
+        "202":
+          description: Delivery retry queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryQueueEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Delivery, webhook, or event was not found or is not visible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Delivery is already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    parameters: []
+  /api/deliveries/{id}/retry:
+    post:
+      tags: [Deliveries]
+      summary: Compatibility alias for queueing another delivery attempt
+      operationId: retryDelivery
+      description: Same behavior and response as `POST /api/deliveries/{id}/resend`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MongoId"
+      responses:
+        "202":
+          description: Delivery retry queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryQueueEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Delivery, webhook, or event was not found or is not visible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Delivery is already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /api/demo-receiver:
+    post:
+      tags: [Demo receiver]
+      summary: Receive and record a demo webhook
+      operationId: receiveDemoWebhook
+      description: |
+        Public ingress route. Captures incoming JSON and headers, redacts
+        sensitive headers, and verifies an optional signature against active
+        webhook secrets. Default response is HTTP 201 with the standard success
+        envelope. Admin configuration may change the success status and body.
+        POST routes are rate limited to 1,200 requests per IP per 15 minutes.
+        Demo receiver routes are not mounted in production unless
+        `ENABLE_DEMO_RECEIVER=true`.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: true
+                - type: array
+                  items: {}
+              description: The receiver records the submitted JSON value. The backend JSON parser enforces a 1 MiB body limit.
+            example:
+              id: evt_123456
+              type: shipment.created
+              data:
+                trackingNumber: TRK-12345
+      parameters:
+        - $ref: "#/components/parameters/WebhookSignature"
+        - $ref: "#/components/parameters/WebhookTimestamp"
+        - $ref: "#/components/parameters/WebhookEvent"
+      responses:
+        "201":
+          description: Default success response is a success envelope; the configured profile may replace its body, including when it keeps status 201.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonValue"
+              example:
+                success: true
+                message: Webhook received
+                data:
+                  headers:
+                    content-type: application/json
+                    x-webhook-event: shipment.created
+                  body:
+                    id: evt_123456
+                    type: shipment.created
+                    data:
+                      trackingNumber: TRK-12345
+                  rawBody: '{"id":"evt_123456","type":"shipment.created"}'
+                  bodyTruncated: false
+                  timestamp: "2026-10-03T10:00:00.000Z"
+                  eventType: shipment.created
+                  signatureValid: null
+                  signature:
+                    valid: null
+                    status: missing
+                    scheme: null
+                    timestampFresh: null
+        "2XX":
+          description: Other configured successful status; response body may be replaced by the admin.
+          content:
+            application/json:
+              schema: {}
+        "400":
+          description: Malformed JSON or signature verification/request processing failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Demo receiver]
+      summary: List recorded demo receiver requests
+      operationId: listDemoReceiverRequests
+      description: |
+        Admin only. History is in-memory, resets on restart, and retains at most
+        100 requests. Request body previews are capped at 64 KiB; oversized
+        bodies set `bodyTruncated`. Sensitive authorization, cookie, API-key,
+        and webhook-signature headers are redacted. Results are newest first.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/DemoReceiverLimit"
+        - name: signatureValid
+          in: query
+          description: Filter by signature verification result; `unknown` means no signature was supplied.
+          schema:
+            type: string
+            enum: ["true", "false", "unknown"]
+        - name: event
+          in: query
+          description: Exact event type filter; 1 to 100 characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        "200":
+          description: Paginated recorded requests.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoReceiverListEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [Demo receiver]
+      summary: Clear recorded demo receiver requests
+      operationId: clearDemoReceiverRequests
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Request history cleared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClearedDemoReceiverEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/demo-receiver/fail:
+    post:
+      tags: [Demo receiver]
+      summary: Receive a demo webhook using the configured failure profile
+      operationId: receiveDemoWebhookFailure
+      description: Public ingress route. Default response is HTTP 500 with a standard error envelope; admin configuration may set a 4xx/5xx status and replace the body. Subject to the same optional signature verification, body limit, route enablement, and 1,200-per-IP-per-15-minute rate limit as the success route.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: true
+                - type: array
+                  items: {}
+      parameters:
+        - $ref: "#/components/parameters/WebhookSignature"
+        - $ref: "#/components/parameters/WebhookTimestamp"
+        - $ref: "#/components/parameters/WebhookEvent"
+      responses:
+        "500":
+          description: Default forced-failure response; configured profiles may use any 4xx or 5xx status and replace the body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonValue"
+              example:
+                success: false
+                message: Demo receiver forced a failure
+                data: null
+        "4XX":
+          description: Configured failure response with an arbitrary JSON body.
+          content:
+            application/json:
+              schema: {}
+        "5XX":
+          description: Configured failure response with an arbitrary JSON body.
+          content:
+            application/json:
+              schema: {}
+        "400":
+          description: Malformed JSON or signature verification/request processing failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/demo-receiver/config:
+    get:
+      tags: [Demo receiver]
+      summary: Get demo receiver response profiles
+      operationId: getDemoReceiverConfig
+      description: Admin only. Profiles are in memory and reset to defaults on process restart.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current success and failure response profiles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoConfigEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      tags: [Demo receiver]
+      summary: Update one or both demo receiver response profiles
+      operationId: updateDemoReceiverConfig
+      description: |
+        Admin only. Supply a non-empty object containing `success`, `failure`,
+        or both. A profile may contain `statusCode` and/or `body`; omitted
+        properties retain the current value. Success status codes must be 200-299;
+        failure codes must be 400-599. `body` may be any JSON value. Updates are
+        in memory and reset on restart.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDemoConfigRequest"
+            examples:
+              success:
+                value:
+                  success:
+                    statusCode: 202
+                    body:
+                      accepted: true
+              both:
+                value:
+                  success:
+                    statusCode: 201
+                  failure:
+                    statusCode: 503
+                    body:
+                      retry: true
+      responses:
+        "200":
+          description: Updated response profiles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoConfigEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [Demo receiver]
+      summary: Restore default demo receiver response profiles
+      operationId: resetDemoReceiverConfig
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Default profiles restored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoConfigEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 15-minute access token returned by registration, login, or refresh.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refreshToken
+      description: Development/non-production refresh cookie. Browser requests must include credentials.
+    productionRefreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-refreshToken
+      description: Production HTTPS refresh cookie. Browser requests must include credentials.
+  headers:
+    RefreshCookie:
+      description: HttpOnly refresh cookie, scoped to `/api/auth`, valid for 30 days. Secure and `__Secure-refreshToken` in production; SameSite defaults to Strict.
+      schema:
+        type: string
+      example: refreshToken=opaque; Path=/api/auth; HttpOnly; SameSite=Strict
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: One-based page number.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    ShipmentLimit:
+      name: limit
+      in: query
+      description: Results per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    WebhookLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 10
+    EventLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    DeliveryLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+    DemoReceiverLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+    MongoId:
+      name: id
+      in: path
+      required: true
+      description: MongoDB ObjectId.
+      schema:
+        $ref: "#/components/schemas/MongoId"
+      example: 65a123456789012345678901
+    DeliveryStatus:
+      name: status
+      in: query
+      schema:
+        $ref: "#/components/schemas/DeliveryStatus"
+    WebhookSignature:
+      name: X-Webhook-Signature
+      in: header
+      required: false
+      description: Optional receiver verification signature. Timestamped format is `sha256=<hex>`; legacy raw-body signature hex is also accepted.
+      schema:
+        type: string
+        pattern: "^(sha256=)?[A-Fa-f0-9]{64}$"
+    WebhookTimestamp:
+      name: X-Webhook-Timestamp
+      in: header
+      required: false
+      description: Unix timestamp in seconds, signed as `<timestamp>.<exact raw request body>`. Timestamped validation accepts at most five minutes of clock skew.
+      schema:
+        type: string
+        pattern: "^\\d+$"
+    WebhookEvent:
+      name: X-Webhook-Event
+      in: header
+      required: false
+      description: Optional event type header recorded by the demo receiver when the JSON body has no string `type`.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Invalid path, query, body, state transition, or request JSON.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            success: false
+            message: Validation failed
+            data: null
+            errors:
+              - field: page
+                message: Page must be a positive integer
+    Unauthorized:
+      description: Missing, invalid, expired, or revoked access token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            success: false
+            message: Authentication required
+            data: null
+    Forbidden:
+      description: Authenticated user lacks the required role.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            success: false
+            message: You do not have permission to perform this action
+            data: null
+    RateLimited:
+      description: Request rate limit exceeded. Rate-limit response headers are supplied by express-rate-limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            success: false
+            message: Too many requests. Try again later.
+            data: null
+    PayloadTooLarge:
+      description: The JSON request body exceeds the 1 MiB parser limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    InternalError:
+      description: Unexpected server or configuration error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            success: false
+            message: Internal server error
+            data: null
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [success, message, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        message:
+          type: string
+        data:
+          description: Operation-specific result; null for empty-result operations.
+    EmptySuccessEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              nullable: true
+              description: Always null for operations with no result body.
+    ApiError:
+      type: object
+      required: [success, message, data]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+        errors:
+          type: array
+          description: Present for request validation or model validation details.
+          items:
+            $ref: "#/components/schemas/FieldError"
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    HealthEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ok]
+    MongoId:
+      type: string
+      pattern: "^[a-fA-F0-9]{24}$"
+      example: 65a123456789012345678901
+    Timestamp:
+      type: string
+      format: date-time
+      example: "2026-10-03T10:00:00.000Z"
+    UserRole:
+      type: string
+      enum: [admin, customer]
+    PublicUser:
+      type: object
+      required: [id, _id, name, email, role, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/MongoId"
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          $ref: "#/components/schemas/UserRole"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 60
+          description: Trimmed by the server.
+        email:
+          type: string
+          format: email
+          description: Normalized by the server.
+        password:
+          type: string
+          minLength: 12
+          format: password
+          writeOnly: true
+      additionalProperties: true
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+          format: password
+          writeOnly: true
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+          format: password
+          writeOnly: true
+        newPassword:
+          type: string
+          minLength: 12
+          format: password
+          writeOnly: true
+    RegistrationEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [user, token]
+              properties:
+                user:
+                  $ref: "#/components/schemas/PublicUser"
+                token:
+                  type: string
+                  description: 15-minute bearer access token (registration response field).
+    AuthSessionEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [user, accessToken, token]
+              properties:
+                user:
+                  $ref: "#/components/schemas/PublicUser"
+                accessToken:
+                  type: string
+                  description: 15-minute bearer access token.
+                token:
+                  type: string
+                  description: Compatibility alias for `accessToken`.
+    CurrentUserEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              allOf:
+                - $ref: "#/components/schemas/PublicUser"
+                - type: object
+                  properties:
+                    user:
+                      $ref: "#/components/schemas/PublicUser"
+    ShipmentStatus:
+      type: string
+      enum:
+        - created
+        - picked_up
+        - in_transit
+        - arrived_at_hub
+        - out_for_delivery
+        - delivered
+        - delivery_failed
+        - cancelled
+    ShipmentStatusEntry:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        note:
+          type: string
+          maxLength: 500
+          nullable: true
+    ShipmentTimelineEntry:
+      type: object
+      required: [status, at, timestamp]
+      properties:
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        at:
+          $ref: "#/components/schemas/Timestamp"
+        timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        note:
+          type: string
+          nullable: true
+    Shipment:
+      type: object
+      required: [id, _id, trackingNumber, customer, origin, destination, amount, status, statusHistory, timeline, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/MongoId"
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        trackingNumber:
+          type: string
+          pattern: "^TRK-\\d{5}$"
+        customer:
+          type: string
+        customerId:
+          allOf:
+            - $ref: "#/components/schemas/MongoId"
+          nullable: true
+        origin:
+          type: string
+        destination:
+          type: string
+        amount:
+          type: number
+          minimum: 0
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        statusHistory:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShipmentStatusEntry"
+        timeline:
+          type: array
+          description: Compatibility view of status history; includes both `at` and `timestamp`.
+          items:
+            $ref: "#/components/schemas/ShipmentTimelineEntry"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    CreateShipmentRequest:
+      type: object
+      required: [origin, destination, amount]
+      properties:
+        customer:
+          type: string
+          description: Required for admins; customer callers are assigned their account name.
+        customerId:
+          $ref: "#/components/schemas/MongoId"
+          description: Optional for admins to assign an existing customer; must be omitted by customer callers.
+        origin:
+          type: string
+          minLength: 1
+        destination:
+          type: string
+          minLength: 1
+        amount:
+          type: number
+          minimum: 0
+        note:
+          description: Optional event note copied into the shipment-created event payload.
+      additionalProperties: true
+    AssignShipmentCustomerRequest:
+      type: object
+      required: [customerId]
+      properties:
+        customerId:
+          $ref: "#/components/schemas/MongoId"
+    UpdateShipmentStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        note:
+          type: string
+          maxLength: 500
+    ShipmentEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Shipment"
+    ShipmentPageData:
+      type: object
+      required: [items, shipments, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Shipment"
+        shipments:
+          type: array
+          description: Compatibility alias for `items`.
+          items:
+            $ref: "#/components/schemas/Shipment"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    ShipmentListEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/ShipmentPageData"
+    Pagination:
+      type: object
+      required: [page, limit, total, totalItems, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+        totalItems:
+          type: integer
+          minimum: 0
+          description: Compatibility alias for `total`.
+        totalPages:
+          type: integer
+          minimum: 1
+    TrackingEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [trackingNumber, status, origin, destination, timeline, lastUpdated]
+              properties:
+                trackingNumber:
+                  type: string
+                  pattern: "^TRK-\\d{5}$"
+                status:
+                  $ref: "#/components/schemas/ShipmentStatus"
+                origin:
+                  type: string
+                destination:
+                  type: string
+                timeline:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ShipmentTimelineEntry"
+                lastUpdated:
+                  $ref: "#/components/schemas/Timestamp"
+    EventType:
+      type: string
+      enum:
+        - webhook.test
+        - shipment.created
+        - shipment.picked_up
+        - shipment.in_transit
+        - shipment.arrived_at_hub
+        - shipment.out_for_delivery
+        - shipment.delivered
+        - shipment.delivery_failed
+        - shipment.cancelled
+    WebhookDeliveryPayload:
+      type: object
+      required: [id, type, createdAt, data]
+      properties:
+        id:
+          type: string
+          pattern: "^evt_[a-zA-Z0-9]{6}$"
+          description: Public event ID.
+        type:
+          $ref: "#/components/schemas/EventType"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        data:
+          type: object
+          description: Event-specific payload. Shipment events contain shipment details; test events contain a message.
+          additionalProperties: true
+    WebhookEventFilter:
+      type: string
+      enum:
+        - "*"
+        - shipment.created
+        - shipment.picked_up
+        - shipment.in_transit
+        - shipment.arrived_at_hub
+        - shipment.out_for_delivery
+        - shipment.delivered
+        - shipment.delivery_failed
+        - shipment.cancelled
+    ShipmentEventPayload:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/EventType"
+        eventId:
+          type: string
+          pattern: "^evt_[a-zA-Z0-9]{6}$"
+        shipmentId:
+          type: string
+          description: Shipment tracking number.
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        note:
+          description: Optional status note.
+        timestamp:
+          $ref: "#/components/schemas/Timestamp"
+      additionalProperties: true
+    Event:
+      type: object
+      required: [eventId, type, payload, createdAt, updatedAt]
+      properties:
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        id:
+          type: string
+        eventId:
+          type: string
+          pattern: "^evt_[a-zA-Z0-9]{6}$"
+        type:
+          $ref: "#/components/schemas/EventType"
+        shipmentId:
+          oneOf:
+            - $ref: "#/components/schemas/MongoId"
+            - type: object
+              properties:
+                _id:
+                  $ref: "#/components/schemas/MongoId"
+                trackingNumber:
+                  type: string
+                  pattern: "^TRK-\\d{5}$"
+                status:
+                  $ref: "#/components/schemas/ShipmentStatus"
+          nullable: true
+        shipment:
+          description: Compatibility virtual for `shipmentId`.
+        payload:
+          description: Event-specific payload.
+          allOf:
+            - $ref: "#/components/schemas/JsonValue"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    EventEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Event"
+    EventPageData:
+      type: object
+      required: [items, events, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Event"
+        events:
+          type: array
+          description: Compatibility alias for `items`.
+          items:
+            $ref: "#/components/schemas/Event"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    EventListEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/EventPageData"
+    Webhook:
+      type: object
+      required: [id, _id, ownerId, user, name, url, events, secret, isActive, active, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        ownerId:
+          $ref: "#/components/schemas/MongoId"
+        user:
+          $ref: "#/components/schemas/MongoId"
+          description: Compatibility alias for `ownerId`.
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/WebhookEventFilter"
+        secret:
+          type: string
+          description: "Full value is only returned on creation or a request with `regenerateSecret: true`; otherwise it is masked."
+          example: whsec_****abcd
+        isActive:
+          type: boolean
+        active:
+          type: boolean
+          description: Compatibility alias for `isActive`.
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    CreateWebhookRequest:
+      type: object
+      required: [name, url, events]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+        url:
+          type: string
+          format: uri
+          description: HTTP(S); credentials are forbidden and production applies HTTPS and public-IP restrictions.
+        events:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/WebhookEventFilter"
+        active:
+          type: boolean
+          default: true
+        isActive:
+          type: boolean
+          description: Alias for `active`; takes precedence if both are provided.
+      additionalProperties: true
+    UpdateWebhookRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/WebhookEventFilter"
+        active:
+          type: boolean
+        isActive:
+          type: boolean
+          description: Alias for `active`; takes precedence if both are provided.
+        regenerateSecret:
+          type: boolean
+          description: Set to true to generate and return a replacement secret.
+      additionalProperties: false
+    WebhookEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Webhook"
+    WebhookPageData:
+      type: object
+      required: [items, webhooks, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Webhook"
+        webhooks:
+          type: array
+          description: Compatibility alias for `items`.
+          items:
+            $ref: "#/components/schemas/Webhook"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    WebhookListEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/WebhookPageData"
+    DeliveryStatus:
+      type: string
+      enum: [pending, success, failed]
+    DeliveryAttempt:
+      type: object
+      required: [attemptNumber, status, response, errorMessage, attemptedAt]
+      properties:
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        id:
+          type: string
+        deliveryId:
+          allOf:
+            - $ref: "#/components/schemas/MongoId"
+          nullable: true
+        webhookId:
+          oneOf:
+            - $ref: "#/components/schemas/MongoId"
+            - $ref: "#/components/schemas/WebhookReference"
+        eventId:
+          oneOf:
+            - $ref: "#/components/schemas/MongoId"
+            - $ref: "#/components/schemas/EventReference"
+        attemptNumber:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [success, failed]
+        httpStatus:
+          type: integer
+          nullable: true
+        statusCode:
+          type: integer
+          nullable: true
+          description: Compatibility alias for `httpStatus`.
+        response:
+          type: string
+          maxLength: 1000
+          nullable: true
+        responseBody:
+          type: string
+          maxLength: 1000
+          nullable: true
+          description: Compatibility alias for `response`.
+        errorMessage:
+          type: string
+          maxLength: 1000
+          nullable: true
+        duration:
+          type: number
+          minimum: 0
+          nullable: true
+        durationMs:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Compatibility alias for `duration`.
+        attemptedAt:
+          $ref: "#/components/schemas/Timestamp"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    WebhookReference:
+      type: object
+      properties:
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+    EventReference:
+      type: object
+      properties:
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        eventId:
+          type: string
+        type:
+          $ref: "#/components/schemas/EventType"
+        payload:
+          type: object
+          additionalProperties: true
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+    Delivery:
+      type: object
+      required: [status, attemptCount, maxAttempts]
+      properties:
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        id:
+          type: string
+        eventId:
+          oneOf:
+            - $ref: "#/components/schemas/MongoId"
+            - $ref: "#/components/schemas/EventReference"
+        webhookId:
+          oneOf:
+            - $ref: "#/components/schemas/MongoId"
+            - $ref: "#/components/schemas/WebhookReference"
+        ownerId:
+          $ref: "#/components/schemas/MongoId"
+        status:
+          $ref: "#/components/schemas/DeliveryStatus"
+        attemptCount:
+          type: integer
+          minimum: 0
+        maxAttempts:
+          type: integer
+          minimum: 1
+        lastAttemptAt:
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+          nullable: true
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryAttempt"
+        event:
+          description: Compatibility virtual for `eventId`; populated in detail responses when available.
+        webhook:
+          description: Compatibility virtual for `webhookId`; may be populated with hook name and URL.
+        user:
+          description: Compatibility virtual for `ownerId`.
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    DeliveryDetail:
+      allOf:
+        - $ref: "#/components/schemas/Delivery"
+        - type: object
+          properties:
+            event:
+              $ref: "#/components/schemas/EventReference"
+            webhook:
+              $ref: "#/components/schemas/WebhookReference"
+    DeliveryQueue:
+      type: object
+      properties:
+        _id:
+          $ref: "#/components/schemas/MongoId"
+        id:
+          type: string
+        eventId:
+          $ref: "#/components/schemas/MongoId"
+        webhookId:
+          $ref: "#/components/schemas/MongoId"
+        ownerId:
+          $ref: "#/components/schemas/MongoId"
+        status:
+          $ref: "#/components/schemas/DeliveryStatus"
+        attemptCount:
+          type: integer
+        maxAttempts:
+          type: integer
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    DeliveryQueueEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DeliveryQueue"
+    DeliveryPageData:
+      type: object
+      required: [items, deliveries, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
+        deliveries:
+          type: array
+          description: Compatibility alias for `items`.
+          items:
+            $ref: "#/components/schemas/Delivery"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    DeliveryListEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DeliveryPageData"
+    DeliveryDetailEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              oneOf:
+                - $ref: "#/components/schemas/DeliveryDetail"
+                - type: object
+                  description: Legacy attempt response when no summary record exists.
+                  properties:
+                    delivery:
+                      type: object
+                      nullable: true
+                      description: Always null when the historical attempt has no summary record.
+                    attempts:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/DeliveryAttempt"
+    DemoSignatureMetadata:
+      type: object
+      required: [valid, status, scheme, timestampFresh]
+      properties:
+        valid:
+          type: boolean
+          nullable: true
+        status:
+          type: string
+          enum: [valid, invalid, missing]
+        scheme:
+          type: string
+          enum: [timestamped, legacy, unknown]
+          nullable: true
+        timestampFresh:
+          type: boolean
+          nullable: true
+    DemoReceivedRequest:
+      type: object
+      required: [headers, body, rawBody, bodyTruncated, timestamp, eventType, signatureValid, signature]
+      properties:
+        headers:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: array
+                items:
+                  type: string
+          description: Incoming headers after sensitive values are redacted.
+        body:
+          description: Parsed body, or a truncated preview object for oversized raw content.
+          allOf:
+            - $ref: "#/components/schemas/JsonValue"
+        rawBody:
+          type: string
+          description: Captured raw body, truncated to 64 KiB.
+        bodyTruncated:
+          type: boolean
+        timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        eventType:
+          type: string
+          nullable: true
+        signatureValid:
+          type: boolean
+          nullable: true
+        signature:
+          $ref: "#/components/schemas/DemoSignatureMetadata"
+    JsonValue:
+      description: Any JSON value, including null.
+    DemoSuccessProfile:
+      type: object
+      required: [statusCode]
+      properties:
+        statusCode:
+          type: integer
+          minimum: 200
+          maximum: 299
+        body:
+          $ref: "#/components/schemas/JsonValue"
+    DemoFailureProfile:
+      type: object
+      required: [statusCode]
+      properties:
+        statusCode:
+          type: integer
+          minimum: 400
+          maximum: 599
+        body:
+          $ref: "#/components/schemas/JsonValue"
+    DemoReceiverConfig:
+      type: object
+      required: [success, failure]
+      properties:
+        success:
+          $ref: "#/components/schemas/DemoSuccessProfile"
+        failure:
+          $ref: "#/components/schemas/DemoFailureProfile"
+    UpdateDemoConfigRequest:
+      type: object
+      minProperties: 1
+      properties:
+        success:
+          type: object
+          minProperties: 1
+          properties:
+            statusCode:
+              type: integer
+              minimum: 200
+              maximum: 299
+            body:
+              $ref: "#/components/schemas/JsonValue"
+          additionalProperties: false
+        failure:
+          type: object
+          minProperties: 1
+          properties:
+            statusCode:
+              type: integer
+              minimum: 400
+              maximum: 599
+            body:
+              $ref: "#/components/schemas/JsonValue"
+          additionalProperties: false
+      additionalProperties: false
+    DemoReceiveEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DemoReceivedRequest"
+    DemoConfigEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DemoReceiverConfig"
+    DemoReceiverPageData:
+      type: object
+      required: [items, requests, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DemoReceivedRequest"
+        requests:
+          type: array
+          description: Resource-named alias for `items`.
+          items:
+            $ref: "#/components/schemas/DemoReceivedRequest"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    DemoReceiverListEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DemoReceiverPageData"
+    ClearedDemoReceiverEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [clearedCount]
+              properties:
+                clearedCount:
+                  type: integer
+                  minimum: 0

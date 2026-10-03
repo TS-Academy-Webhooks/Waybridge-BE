@@ -2,6 +2,8 @@ const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const path = require("node:path");
+const swaggerUi = require("swagger-ui-express");
 const shipmentRoutes = require("./routes/shipmentRoutes");
 const trackingRoutes = require("./routes/trackingRoutes");
 const eventRoutes = require("./routes/eventRoutes");
@@ -59,6 +61,27 @@ const healthCheck = (req, res) => {
 
 app.get("/", (req, res) => sendSuccess(res, "Logistics API is running", { status: "ok" }));
 app.get(["/health", "/api/health"], healthCheck);
+
+app.use("/docs", helmet.contentSecurityPolicy({
+  directives: {
+    scriptSrc: ["'self'", "'unsafe-inline'"],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    imgSrc: ["'self'", "data:"],
+    connectSrc: ["'self'"],
+  },
+}));
+app.get("/docs/openapi.yaml", (req, res, next) => {
+  res.type("application/yaml").sendFile(path.join(__dirname, "..", "openapi.yaml"), (error) => {
+    if (error) next(error);
+  });
+});
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(null, {
+  customSiteTitle: "Waybridge API Reference",
+  swaggerOptions: {
+    url: "/docs/openapi.yaml",
+    withCredentials: true,
+  },
+}));
 
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/shipments", authenticate, shipmentRoutes);

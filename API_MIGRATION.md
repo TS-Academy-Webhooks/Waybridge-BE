@@ -32,7 +32,7 @@ Mongo documents retain `_id` and include the earlier `id` alias where relevant. 
 | `POST /api/auth/change-password` | Access token | Change password (12+ characters) and revoke every active session for that user. |
 | `GET /api/auth/me` | Access token | Return the current public user. |
 
-Registration, login, and refresh return `data.accessToken` and the earlier `data.token` alias with the same 15-minute bearer token. `GET /api/auth/me` returns the public user both as a flat `data` object and under `data.user`.
+Registration returns its 15-minute access token as `data.token`. Login and refresh return the same token under both `data.accessToken` and the compatibility alias `data.token`. `GET /api/auth/me` returns the public user both as a flat `data` object and under `data.user`.
 
 The refresh token is not returned in JSON. It is set as a 30-day HttpOnly cookie scoped to `/api/auth`; production cookies are Secure and named `__Secure-refreshToken`. `REFRESH_COOKIE_SAME_SITE` defaults to `strict`; `none` is accepted only in production HTTPS. Browser clients must send auth requests with credentials enabled and use the returned access token in `Authorization: Bearer <token>`. Keep access tokens in memory rather than browser storage.
 

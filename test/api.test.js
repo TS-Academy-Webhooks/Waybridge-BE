@@ -261,3 +261,35 @@ test("public and protected routes use the standard response envelope", async (t)
   assert.equal(failureBody.success, false);
   assert.equal(failureBody.data, null);
 });
+
+test("Swagger UI and the raw OpenAPI specification are served", async (t) => {
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const uiResponse = await fetch(`${baseUrl}/docs`);
+  const uiHtml = await uiResponse.text();
+  assert.equal(uiResponse.status, 200);
+  assert.equal(uiResponse.url, `${baseUrl}/docs/`);
+  assert.match(uiHtml, /id="swagger-ui"/);
+  assert.match(uiResponse.headers.get("content-security-policy"), /'unsafe-inline'/);
+
+  const initResponse = await fetch(`${baseUrl}/docs/swagger-ui-init.js`);
+  const initScript = await initResponse.text();
+  assert.equal(initResponse.status, 200);
+  assert.match(initScript, /\/docs\/openapi\.yaml/);
+
+  const bundleResponse = await fetch(`${baseUrl}/docs/swagger-ui-bundle.js`);
+  assert.equal(bundleResponse.status, 200);
+
+  const specResponse = await fetch(`${baseUrl}/docs/openapi.yaml`);
+  const spec = await specResponse.text();
+  assert.equal(specResponse.status, 200);
+  assert.match(specResponse.headers.get("content-type"), /application\/yaml/);
+  assert.match(spec, /openapi: 3\.0\.3/);
+  assert.match(spec, /operationId: createWebhook/);
+});

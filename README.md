@@ -18,5 +18,7 @@ For local development with the Waybridge frontend, use `CORS_ORIGIN=http://local
 
 ## Documentation
 
+- [Interactive Swagger API reference](http://localhost:5000/docs) (with the server running)
+- [OpenAPI specification](openapi.yaml)
 - [API and migration guide](API_MIGRATION.md)
 - [Backend merger change summary](BACKEND_MERGER_SUMMARY.md)

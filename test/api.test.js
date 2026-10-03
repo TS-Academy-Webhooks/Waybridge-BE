@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
+const { validationResult } = require("express-validator");
 const User = require("../src/models/User");
 const Shipment = require("../src/models/Shipment");
 const RefreshSession = require("../src/models/RefreshSession");
@@ -11,6 +12,7 @@ const DeliveryAttempt = require("../src/models/DeliveryAttempt");
 const Delivery = require("../src/models/Delivery");
 const app = require("../src/app");
 const validateWebhookUrl = require("../src/utils/validateWebhookUrl");
+const webhookUrlValidators = require("../src/middleware/webhookUrlValidators");
 const { ALLOWED_STATUS_TRANSITIONS } = require("../src/services/shipmentService");
 const authorizeRoles = require("../src/middleware/authorizeRoles");
 const authService = require("../src/services/authService");
@@ -193,15 +195,26 @@ test("shipment transition map matches the allowed workflow", () => {
 test("webhook URL policy gates localhost and blocks production loopback", async () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalLocalFlag = process.env.ALLOW_LOCALHOST_WEBHOOKS;
+  const originalDemoReceiverFlag = process.env.ENABLE_DEMO_RECEIVER;
 
   try {
     process.env.NODE_ENV = "development";
     process.env.ALLOW_LOCALHOST_WEBHOOKS = "false";
+    process.env.ENABLE_DEMO_RECEIVER = "true";
     await assert.rejects(validateWebhookUrl("http://localhost:5000"), { statusCode: 400 });
     process.env.ALLOW_LOCALHOST_WEBHOOKS = "true";
+    process.env.ENABLE_DEMO_RECEIVER = "false";
+    await assert.rejects(validateWebhookUrl("http://localhost:5000"), { statusCode: 400 });
+    process.env.ENABLE_DEMO_RECEIVER = "true";
     assert.equal(await validateWebhookUrl("http://localhost:5000/receiver"), "http://localhost:5000/receiver");
 
+    await assert.rejects(validateWebhookUrl("http://127.0.0.1:5000"), { statusCode: 400 });
+    await assert.rejects(validateWebhookUrl("http://receiver.localhost:5000"), { statusCode: 400 });
+    process.env.NODE_ENV = "test";
+    await assert.rejects(validateWebhookUrl("http://localhost:5000"), { statusCode: 400 });
+
     process.env.NODE_ENV = "production";
+    await assert.rejects(validateWebhookUrl("https://localhost:5000"), { statusCode: 400 });
     await assert.rejects(validateWebhookUrl("http://127.0.0.1:5000"), { statusCode: 400 });
     await assert.rejects(validateWebhookUrl("http://8.8.8.8"), { statusCode: 400 });
     assert.equal(await validateWebhookUrl("https://8.8.8.8"), "https://8.8.8.8/");
@@ -210,6 +223,49 @@ test("webhook URL policy gates localhost and blocks production loopback", async 
     else process.env.NODE_ENV = originalNodeEnv;
     if (originalLocalFlag === undefined) delete process.env.ALLOW_LOCALHOST_WEBHOOKS;
     else process.env.ALLOW_LOCALHOST_WEBHOOKS = originalLocalFlag;
+    if (originalDemoReceiverFlag === undefined) delete process.env.ENABLE_DEMO_RECEIVER;
+    else process.env.ENABLE_DEMO_RECEIVER = originalDemoReceiverFlag;
+  }
+});
+
+test("webhook route validation grants only an explicitly enabled localhost exception", async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalLocalFlag = process.env.ALLOW_LOCALHOST_WEBHOOKS;
+  const originalDemoReceiverFlag = process.env.ENABLE_DEMO_RECEIVER;
+
+  async function errorsForUrl(url, optional = false) {
+    const req = { body: url === undefined ? {} : { url } };
+    await Promise.all(
+      webhookUrlValidators({ optional }).map((validator) => validator.run(req))
+    );
+    return validationResult(req).array();
+  }
+
+  try {
+    process.env.NODE_ENV = "development";
+    process.env.ALLOW_LOCALHOST_WEBHOOKS = "true";
+    process.env.ENABLE_DEMO_RECEIVER = "true";
+
+    assert.deepEqual(await errorsForUrl("http://localhost:5000/api/demo-receiver"), []);
+    assert.deepEqual(await errorsForUrl("https://hooks.example.test/receiver"), []);
+    assert.ok((await errorsForUrl("http://internal-service:5000/receiver")).length > 0);
+    assert.deepEqual(await errorsForUrl(undefined, true), []);
+
+    process.env.ENABLE_DEMO_RECEIVER = "false";
+    assert.ok((await errorsForUrl("http://localhost:5000/api/demo-receiver")).length > 0);
+    process.env.ENABLE_DEMO_RECEIVER = "true";
+    process.env.ALLOW_LOCALHOST_WEBHOOKS = "false";
+    assert.ok((await errorsForUrl("http://localhost:5000/api/demo-receiver")).length > 0);
+    process.env.ALLOW_LOCALHOST_WEBHOOKS = "true";
+    process.env.NODE_ENV = "production";
+    assert.ok((await errorsForUrl("http://localhost:5000/api/demo-receiver")).length > 0);
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalLocalFlag === undefined) delete process.env.ALLOW_LOCALHOST_WEBHOOKS;
+    else process.env.ALLOW_LOCALHOST_WEBHOOKS = originalLocalFlag;
+    if (originalDemoReceiverFlag === undefined) delete process.env.ENABLE_DEMO_RECEIVER;
+    else process.env.ENABLE_DEMO_RECEIVER = originalDemoReceiverFlag;
   }
 });
 

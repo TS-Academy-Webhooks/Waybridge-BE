@@ -71,7 +71,7 @@ All webhook endpoints require an access token. A customer owns the hooks they cr
 
 Events may be any supported `shipment.*` type or `"*"`. New secrets are shown in full only on create or the request that regenerates them; normal list/detail responses mask them. Store a secret securely when it is shown.
 
-URLs must be valid HTTP(S), contain no credentials, and pass the environment's URL policy. Production requires HTTPS and blocks private, loopback, and link-local IP addresses after DNS resolution. In development, local webhook URLs require `ALLOW_LOCALHOST_WEBHOOKS=true`. Restrict outbound network access in production as additional protection against DNS rebinding.
+URLs must be valid HTTP(S), contain no credentials, and pass the environment's URL policy. Production requires HTTPS and blocks private, loopback, and link-local IP addresses after DNS resolution. The exact `localhost` hostname is allowed only when `NODE_ENV=development`, `ALLOW_LOCALHOST_WEBHOOKS=true`, and `ENABLE_DEMO_RECEIVER=true`; loopback aliases remain blocked, and any other environment or flag combination rejects localhost. Restrict outbound network access in production as additional protection against DNS rebinding.
 
 ## Events, deliveries, and signature verification
 

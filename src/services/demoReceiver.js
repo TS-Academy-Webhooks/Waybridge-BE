@@ -19,7 +19,7 @@ const DEFAULT_RESPONSE_PROFILES = {
     statusCode: 500,
     body: {
       success: false,
-      message: "Demo receiver forced a failure",
+      message: "Demo Receiver forced a failure",
       data: null,
     },
   },

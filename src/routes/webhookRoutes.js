@@ -2,6 +2,7 @@ const express = require("express");
 const { body, param, query } = require("express-validator");
 const router = express.Router();
 const validateRequest = require("../middleware/validateRequest");
+const webhookUrlValidators = require("../middleware/webhookUrlValidators");
 const eventTypes = require("../utils/eventTypes");
 const {
   createWebhook,
@@ -21,7 +22,7 @@ const validEvents = body("events.*").custom((value) =>
 router.post(
   "/",
   body("name").trim().notEmpty().withMessage("Name is required"),
-  body("url").isURL({ protocols: ["http", "https"], require_protocol: true }).withMessage("A valid http or https URL is required"),
+  ...webhookUrlValidators(),
   body("events").isArray({ min: 1 }).withMessage("Select at least one event"),
   validEvents,
   body("active").optional().isBoolean().withMessage("Active must be true or false").toBoolean(),
@@ -60,7 +61,7 @@ router.patch(
   "/:id",
   webhookId,
   body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
-  body("url").optional().isURL({ protocols: ["http", "https"], require_protocol: true }).withMessage("A valid http or https URL is required"),
+  ...webhookUrlValidators({ optional: true }),
   body("events").optional().isArray({ min: 1 }).withMessage("Select at least one event"),
   body("events.*").optional().custom((value) =>
     value === "*" || eventTypes.includes(value)
@@ -75,7 +76,7 @@ router.put(
   "/:id",
   webhookId,
   body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
-  body("url").optional().isURL({ protocols: ["http", "https"], require_protocol: true }).withMessage("A valid http or https URL is required"),
+  ...webhookUrlValidators({ optional: true }),
   body("events").optional().isArray({ min: 1 }).withMessage("Select at least one event"),
   body("events.*").optional().custom((value) =>
     value === "*" || eventTypes.includes(value)

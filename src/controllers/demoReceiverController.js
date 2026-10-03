@@ -56,13 +56,13 @@ exports.clearReceived = (_req, res) => {
 };
 
 exports.getConfiguration = (_req, res) => {
-  return sendSuccess(res, "Demo receiver configuration retrieved successfully", getResponseProfiles());
+  return sendSuccess(res, "Demo Receiver configuration retrieved successfully", getResponseProfiles());
 };
 
 exports.updateConfiguration = (req, res) => {
   return sendSuccess(
     res,
-    "Demo receiver configuration updated successfully",
+    "Demo Receiver configuration updated successfully",
     updateResponseProfiles(req.body)
   );
 };
@@ -70,7 +70,7 @@ exports.updateConfiguration = (req, res) => {
 exports.resetConfiguration = (_req, res) => {
   return sendSuccess(
     res,
-    "Demo receiver configuration reset successfully",
+    "Demo Receiver configuration reset successfully",
     resetResponseProfiles()
   );
 };

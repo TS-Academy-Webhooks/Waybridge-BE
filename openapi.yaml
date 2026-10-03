@@ -29,8 +29,9 @@ info:
 
     Webhook targets must use HTTP or HTTPS and cannot contain URL credentials.
     Production requires HTTPS and blocks private, loopback, link-local, and
-    reserved IP addresses after DNS resolution. Local targets are allowed only
-    outside production with `ALLOW_LOCALHOST_WEBHOOKS=true`.
+    reserved IP addresses after DNS resolution. The exact `localhost` hostname
+    is allowed only when `NODE_ENV=development`, `ALLOW_LOCALHOST_WEBHOOKS=true`,
+    and `ENABLE_DEMO_RECEIVER=true`; loopback aliases remain blocked.
 
     Authentication routes are limited to 20 requests per IP per 15 minutes.
     `REFRESH_COOKIE_SAME_SITE` defaults to `strict`; `none` is accepted only in
@@ -60,7 +61,7 @@ tags:
   - name: Events
   - name: Webhooks
   - name: Deliveries
-  - name: Demo receiver
+  - name: Demo Receiver
     description: |
       The demo receiver routes are mounted outside production by default. In
       production they are available only when `ENABLE_DEMO_RECEIVER=true`.
@@ -1232,7 +1233,7 @@ paths:
                 $ref: "#/components/schemas/ApiError"
   /api/demo-receiver:
     post:
-      tags: [Demo receiver]
+      tags: [Demo Receiver]
       summary: Receive and record a demo webhook
       operationId: receiveDemoWebhook
       description: |
@@ -1241,7 +1242,7 @@ paths:
         webhook secrets. Default response is HTTP 201 with the standard success
         envelope. Admin configuration may change the success status and body.
         POST routes are rate limited to 1,200 requests per IP per 15 minutes.
-        Demo receiver routes are not mounted in production unless
+        Demo Receiver routes are not mounted in production unless
         `ENABLE_DEMO_RECEIVER=true`.
       security: []
       requestBody:
@@ -1311,7 +1312,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
     get:
-      tags: [Demo receiver]
+      tags: [Demo Receiver]
       summary: List recorded demo receiver requests
       operationId: listDemoReceiverRequests
       description: |
@@ -1351,7 +1352,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     delete:
-      tags: [Demo receiver]
+      tags: [Demo Receiver]
       summary: Clear recorded demo receiver requests
       operationId: clearDemoReceiverRequests
       security:
@@ -1369,7 +1370,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
   /api/demo-receiver/fail:
     post:
-      tags: [Demo receiver]
+      tags: [Demo Receiver]
       summary: Receive a demo webhook using the configured failure profile
       operationId: receiveDemoWebhookFailure
       description: Public ingress route. Default response is HTTP 500 with a standard error envelope; admin configuration may set a 4xx/5xx status and replace the body. Subject to the same optional signature verification, body limit, route enablement, and 1,200-per-IP-per-15-minute rate limit as the success route.
@@ -1397,7 +1398,7 @@ paths:
                 $ref: "#/components/schemas/JsonValue"
               example:
                 success: false
-                message: Demo receiver forced a failure
+                message: Demo Receiver forced a failure
                 data: null
         "4XX":
           description: Configured failure response with an arbitrary JSON body.
@@ -1421,7 +1422,7 @@ paths:
           $ref: "#/components/responses/RateLimited"
   /api/demo-receiver/config:
     get:
-      tags: [Demo receiver]
+      tags: [Demo Receiver]
       summary: Get demo receiver response profiles
       operationId: getDemoReceiverConfig
       description: Admin only. Profiles are in memory and reset to defaults on process restart.
@@ -1439,7 +1440,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     patch:
-      tags: [Demo receiver]
+      tags: [Demo Receiver]
       summary: Update one or both demo receiver response profiles
       operationId: updateDemoReceiverConfig
       description: |
@@ -1487,7 +1488,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     delete:
-      tags: [Demo receiver]
+      tags: [Demo Receiver]
       summary: Restore default demo receiver response profiles
       operationId: resetDemoReceiverConfig
       security:

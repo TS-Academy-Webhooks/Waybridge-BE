@@ -1,6 +1,7 @@
 const dns = require("node:dns/promises");
 const net = require("node:net");
 const AppError = require("./AppError");
+const { isLocalhostWebhookAllowed } = require("./localhostWebhookPolicy");
 
 function invalidUrl(message) {
   throw new AppError("Validation failed", 400, [{ field: "url", message }]);
@@ -51,11 +52,13 @@ async function validateWebhookUrl(value) {
   }
 
   const hostname = parsed.hostname.toLowerCase();
-  const localhostAllowed = process.env.NODE_ENV !== "production" &&
-    process.env.ALLOW_LOCALHOST_WEBHOOKS === "true";
-
-  if (isLocalhost(hostname) && !localhostAllowed) {
-    invalidUrl("Localhost webhook URLs require ALLOW_LOCALHOST_WEBHOOKS=true outside production");
+  if (
+    isLocalhost(hostname) &&
+    (hostname !== "localhost" || !isLocalhostWebhookAllowed())
+  ) {
+    invalidUrl(
+      "Only localhost URLs are allowed in development when ALLOW_LOCALHOST_WEBHOOKS=true and ENABLE_DEMO_RECEIVER=true"
+    );
   }
 
   if (process.env.NODE_ENV === "production") {

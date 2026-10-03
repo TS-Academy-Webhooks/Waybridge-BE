@@ -20,7 +20,7 @@ Waybridge relies on two distinct, complementary repositories working in tandem t
 * [Emmanuel Agbavwe](https://github.com/Aro1914) - UI integration tests, client-side error handling (🎨, 🐛)
 
 ### Backend Team
-* [Opeyemi](https://github.com/Alternateopeyemi) - Database architecture, webhook delivery engine (⚙️)
+* [Opeyemi Daodu](https://github.com/Alternateopeyemi) - Database architecture, webhook delivery engine (⚙️)
 * [Backend Dev 2](https://github.com) - Security protocols, signing secrets, API gateway (⚙️)
 
 ---

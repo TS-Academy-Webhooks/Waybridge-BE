@@ -14,7 +14,7 @@ Waybridge relies on two distinct, complementary repositories working in tandem t
 ## Our Contributors (Group 43)
 
 ### Frontend Team
-* [Frontend Dev 1](https://github.com) - Core UI components, webhook dashboard layout (🎨)
+* [Faith Gabriel](https://github.com/Faithgabriel1) - Deliveries & Events UI, delivery tracking and retry logic (🎨)
 * [Frontend Dev 2](https://github.com) - Global state management, event log visualizations (🎨)
 * [Frontend Dev 3](https://github.com) - Real-time notification streams, component styling (🎨)
 * [Emmanuel Agbavwe](https://github.com/Aro1914) - UI integration tests, client-side error handling (🎨, 🐛)

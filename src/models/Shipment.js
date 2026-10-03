@@ -78,7 +78,8 @@ shipmentSchema.virtual("id").get(function getId() {
   return String(this._id);
 });
 shipmentSchema.virtual("timeline").get(function getTimeline() {
-  return this.statusHistory.map(({ status, timestamp, note }) => ({
+  const statusHistory = Array.isArray(this.statusHistory) ? this.statusHistory : [];
+  return statusHistory.map(({ status, timestamp, note }) => ({
     status,
     at: timestamp,
     timestamp,

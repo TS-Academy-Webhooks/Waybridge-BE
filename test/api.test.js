@@ -75,6 +75,19 @@ test("paginated responses expose both legacy and modern field names", () => {
   });
 });
 
+test("shipment JSON tolerates status history omitted by a projection", () => {
+  const shipment = new Shipment({
+    trackingNumber: "TRK-12347",
+    customer: "Test",
+    origin: "A",
+    destination: "B",
+    amount: 0,
+  });
+  shipment.statusHistory = undefined;
+
+  assert.deepEqual(shipment.toJSON().timeline, []);
+});
+
 test("webhook signatures keep the legacy timestamped format and event envelope", () => {
   const event = {
     eventId: "evt_123456",

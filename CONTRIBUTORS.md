@@ -21,7 +21,7 @@ Waybridge relies on two distinct, complementary repositories working in tandem t
 
 ### Backend Team
 * [Opeyemi Daodu](https://github.com/Alternateopeyemi) - Database architecture, webhook delivery engine (⚙️)
-* [Backend Dev 2](https://github.com) - Security protocols, signing secrets, API gateway (⚙️)
+* [Nnanyerugo Victory](https://github.com/ivynvc) - Shipment API, Event generation system, Delivery logging (⚙️)
 
 ---
 Want to explore the guidelines or run local builds? Check out our [Contributing Guidelines](CONTRIBUTING.md).

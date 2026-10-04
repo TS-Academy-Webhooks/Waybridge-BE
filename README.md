@@ -2,6 +2,24 @@
 
 Node.js, Express, and MongoDB backend combining the earlier user-owned webhook API with the shared backend's session security, SSRF defenses, rate limiting, shipment ownership, and operational checks.
 
+## Attribution
+
+The projects in [Waybridge](https://github.com/TS-Academy-Webhooks/Waybridge)
+and [Waybridge-BE](https://github.com/TS-Academy-Webhooks/Waybridge-BE) are
+direct results of the efforts of everyone listed in the `CONTRIBUTORS.md`
+files of both repositories. Both projects also owe their success to the
+underlying work in the
+[Webhook project](https://github.com/TS-Academy-Webhooks/Webhook).
+
+### Contributors
+
+- Faith Gabriel ([@Faithgabriel1](https://github.com/Faithgabriel1))
+- Egele Tochi Vivian ([@Kingsley-Vivian](https://github.com/Kingsley-Vivian))
+- Babs-Alli Ayomipo David ([@BabsAlliDev](https://github.com/BabsAlliDev))
+- Opeyemi Daodu ([@Alternateopeyemi](https://github.com/Alternateopeyemi))
+- Nnanyerugo Victory ([@ivynvc](https://github.com/ivynvc))
+- Emmanuel Agbavwe ([@Aro1914](https://github.com/Aro1914))
+
 ## Setup
 
 Requires Node.js 18 or newer and MongoDB.

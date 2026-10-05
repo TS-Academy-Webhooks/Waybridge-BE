@@ -33,7 +33,7 @@ info:
     is allowed only when `NODE_ENV=development`, `ALLOW_LOCALHOST_WEBHOOKS=true`,
     and `ENABLE_DEMO_RECEIVER=true`; loopback aliases remain blocked.
 
-    Authentication routes are limited to 20 requests per IP per 15 minutes.
+    Authentication routes are limited to 80 requests per IP per 15 minutes.
     `REFRESH_COOKIE_SAME_SITE` defaults to `strict`; `none` is accepted only in
     production HTTPS. CORS allows configured origins with credentials.
 
@@ -178,7 +178,7 @@ paths:
       tags: [Authentication]
       summary: Sign in and start a refresh session
       operationId: login
-      description: Authentication endpoints are limited to 20 requests per IP per 15 minutes.
+      description: Authentication endpoints are limited to 80 requests per IP per 15 minutes.
       security: []
       requestBody:
         required: true
@@ -288,7 +288,7 @@ paths:
       description: |
         If a refresh cookie is present, its session is revoked. Without a cookie
         this endpoint still succeeds and clears the browser cookie.
-        Authentication endpoints are rate limited to 20 requests per IP per
+        Authentication endpoints are rate limited to 80 requests per IP per
         15 minutes.
       security: []
       responses:

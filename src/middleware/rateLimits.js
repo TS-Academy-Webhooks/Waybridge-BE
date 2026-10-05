@@ -14,7 +14,7 @@ function createLimiter(limit, message) {
 }
 
 module.exports = {
-  authLimiter: createLimiter(20, "Too many authentication requests. Try again later."),
+  authLimiter: createLimiter(80, "Too many authentication requests. Try again later."),
   demoReceiverLimiter: createLimiter(1200, "Too many demo receiver requests. Try again later."),
   trackingLimiter: createLimiter(60, "Too many tracking requests. Try again later."),
 };
